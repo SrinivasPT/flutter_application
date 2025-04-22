@@ -1,379 +1,120 @@
-// main.dart
 import 'package:flutter/material.dart';
-import 'package:web_socket_channel/web_socket_channel.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'dart:convert';
-import 'package:intl/intl.dart';
-import 'dart:async';
+import 'package:flutter/services.dart';
+import 'screens/home_screen.dart';
+import 'screens/alert_screen.dart';
+import 'screens/scan_screen.dart';
 
 void main() {
-  runApp(AlertApp());
+  runApp(FacialParalysisApp());
 }
 
-class AlertApp extends StatelessWidget {
+class FacialParalysisApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
+    // Set status bar color
+    SystemChrome.setSystemUIOverlayStyle(
+      SystemUiOverlayStyle(statusBarColor: Colors.transparent),
+    );
+
     return MaterialApp(
-      title: 'Real-Time Alerts',
-      theme: ThemeData(primarySwatch: Colors.blue),
-      home: AlertScreen(),
+      title: 'Facial Paralysis Scanner',
+      debugShowCheckedModeBanner: false,
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+        visualDensity: VisualDensity.adaptivePlatformDensity,
+        fontFamily: 'Roboto',
+        appBarTheme: AppBarTheme(
+          backgroundColor: Colors.blue[700],
+          elevation: 0,
+          centerTitle: true,
+        ),
+        elevatedButtonTheme: ElevatedButtonThemeData(
+          style: ElevatedButton.styleFrom(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(10),
+            ),
+          ),
+        ),
+      ),
+      home: HomeScreen(),
     );
   }
 }
 
-class Alert {
-  final int id;
-  final String title;
-  final String imageName;
-  final DateTime timestamp;
-
-  Alert({
-    required this.id,
-    required this.title,
-    required this.imageName,
-    required this.timestamp,
-  });
-
-  factory Alert.fromJson(Map<String, dynamic> json) {
-    return Alert(
-      id: json['id'] ?? 0, // Provide default value if null
-      title: json['title'] ?? 'Unknown Alert', // Provide default value if null
-      imageName:
-          json['imageName'] ??
-          'No Image', // Changed from 'image_name' to 'imageName'
-      timestamp:
-          json['timestamp'] != null
-              ? DateTime.parse(json['timestamp'])
-              : DateTime.now(), // Handle null timestamp
-    );
-  }
-}
-
-class AlertScreen extends StatefulWidget {
-  @override
-  _AlertScreenState createState() => _AlertScreenState();
-}
-
-class _AlertScreenState extends State<AlertScreen> {
-  final List<Alert> _alerts = [];
-  WebSocketChannel? _channel;
-  final FlutterLocalNotificationsPlugin _notifications =
-      FlutterLocalNotificationsPlugin();
-  bool _isConnected = false;
-  int _reconnectAttempt = 0;
-  Timer? _reconnectTimer;
-  static const String _serverUrl =
-      'ws://10.0.2.2:3006/ws'; // Use your actual server address
-  // For local development, use 10.0.2.2 for Android emulator
-  static const int _maxAlertsToShow = 5; // Updated to show 10 alerts
-
-  @override
-  void initState() {
-    super.initState();
-    _initNotifications();
-    _connectWebSocket();
-  }
-
-  Future<void> _initNotifications() async {
-    const AndroidInitializationSettings initializationSettingsAndroid =
-        AndroidInitializationSettings('@mipmap/ic_launcher');
-
-    final InitializationSettings initializationSettings =
-        InitializationSettings(android: initializationSettingsAndroid);
-
-    await _notifications.initialize(
-      initializationSettings,
-      onDidReceiveNotificationResponse: (NotificationResponse response) {
-        // Handle notification tap
-      },
-    );
-  }
-
-  void _connectWebSocket() {
-    if (_reconnectTimer != null && _reconnectTimer!.isActive) {
-      _reconnectTimer!.cancel();
-    }
-
-    try {
-      setState(() {
-        _isConnected = false;
-      });
-
-      _channel = WebSocketChannel.connect(Uri.parse(_serverUrl));
-
-      _channel!.stream.listen(
-        (message) {
-          setState(() {
-            _isConnected = true;
-            _reconnectAttempt = 0;
-          });
-
-          final data = json.decode(message);
-          switch (data['type']) {
-            case 'INITIAL_STATE':
-              _handleInitialState(data['data']);
-              break;
-            case 'NEW_ALERT':
-              _handleNewAlert(data['data']);
-              break;
-          }
-        },
-        onError: (error) {
-          print('WebSocket error: $error');
-          _handleConnectionFailure(
-            'Connection Error',
-            'Error connecting to server',
-          );
-        },
-        onDone: () {
-          print('WebSocket connection closed');
-          _handleConnectionFailure(
-            'Connection Closed',
-            'Server connection was closed',
-          );
-        },
-      );
-    } catch (e) {
-      print('Failed to connect to WebSocket: $e');
-      _handleConnectionFailure(
-        'Connection Failed',
-        'Could not connect to server',
-      );
-    }
-  }
-
-  void _handleConnectionFailure(String title, String message) {
-    if (mounted) {
-      setState(() {
-        _isConnected = false;
-      });
-
-      _showNotification(title, message);
-
-      // Implement exponential backoff for reconnection attempts
-      _reconnectAttempt++;
-      final backoffSeconds = _calculateBackoff(_reconnectAttempt);
-      print(
-        'Attempting to reconnect in $backoffSeconds seconds (attempt $_reconnectAttempt)',
-      );
-
-      _reconnectTimer = Timer(
-        Duration(seconds: backoffSeconds),
-        _connectWebSocket,
-      );
-    }
-  }
-
-  int _calculateBackoff(int attempt) {
-    // Exponential backoff with max of 30 seconds
-    return attempt > 5 ? 30 : (1 << attempt);
-  }
-
-  void _handleInitialState(List<dynamic> alerts) {
-    setState(() {
-      _alerts.clear();
-      try {
-        _alerts.addAll(
-          alerts.map((a) => Alert.fromJson(a as Map<String, dynamic>)).toList(),
-        );
-        // Trim to keep only the most recent alerts
-        if (_alerts.length > _maxAlertsToShow) {
-          _alerts.removeRange(_maxAlertsToShow, _alerts.length);
-        }
-      } catch (e) {
-        print('Error parsing initial alerts: $e');
-      }
-    });
-  }
-
-  void _handleNewAlert(Map<String, dynamic> alertData) {
-    try {
-      final alert = Alert.fromJson(alertData);
-      setState(() {
-        _alerts.insert(0, alert);
-        // Keep only the most recent alerts
-        if (_alerts.length > _maxAlertsToShow) {
-          _alerts.removeRange(_maxAlertsToShow, _alerts.length);
-        }
-      });
-
-      _showNotification(alert.title, alert.imageName);
-    } catch (e) {
-      print('Error handling new alert: $e');
-    }
-  }
-
-  Future<void> _showNotification(String title, String body) async {
-    const AndroidNotificationDetails androidPlatformChannelSpecifics =
-        AndroidNotificationDetails(
-          'alerts_channel',
-          'Alerts',
-          importance: Importance.max,
-          priority: Priority.high,
-          showWhen: true,
-        );
-
-    const NotificationDetails platformChannelSpecifics = NotificationDetails(
-      android: androidPlatformChannelSpecifics,
-    );
-
-    await _notifications.show(0, title, body, platformChannelSpecifics);
-  }
-
-  @override
-  void dispose() {
-    _channel?.sink.close();
-    _reconnectTimer?.cancel();
-    super.dispose();
-  }
-
-  void _manualReconnect() {
-    _reconnectAttempt = 0;
-    _connectWebSocket();
-  }
-
+class LandingScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: Text('Real-Time Alerts'),
-        actions: [
-          IconButton(icon: Icon(Icons.refresh), onPressed: _manualReconnect),
-          IconButton(
-            icon: Icon(Icons.info),
-            onPressed: () => _showConnectionInfo(),
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-          _buildStatusIndicator(),
-          Expanded(
-            child:
-                _alerts.isEmpty
-                    ? Center(child: Text('No alerts received yet'))
-                    : ListView.builder(
-                      reverse: true, // Newest first
-                      itemCount: _alerts.length,
-                      itemBuilder: (context, index) {
-                        final alert = _alerts[index];
-                        return _buildAlertCard(alert);
-                      },
-                    ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatusIndicator() {
-    return Container(
-      padding: EdgeInsets.all(8),
-      color: Colors.grey[200],
-      child: Row(
-        children: [
-          Icon(
-            Icons.circle,
-            color: _isConnected ? Colors.green : Colors.red,
-            size: 12,
-          ),
-          SizedBox(width: 8),
-          Text(
-            _isConnected
-                ? 'Connected to server'
-                : 'Disconnected - Reconnecting...',
-          ),
-          if (!_isConnected) Spacer(),
-          if (!_isConnected)
-            TextButton(
-              onPressed: _manualReconnect,
-              child: Text('Retry Now'),
-              style: TextButton.styleFrom(
-                padding: EdgeInsets.symmetric(horizontal: 8),
-                minimumSize: Size(0, 0),
-                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      appBar: AppBar(title: Text('Facial Paralysis Monitor')),
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: <Widget>[
+            _buildOptionCard(
+              context,
+              'Scan',
+              'Scan face for facial paralysis detection',
+              Icons.camera_alt,
+              Colors.blue,
+              () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => ScanScreen()),
               ),
             ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildAlertCard(Alert alert) {
-    return Card(
-      margin: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      child: ListTile(
-        leading: Icon(Icons.warning, color: Colors.blue),
-        title: Text(alert.title),
-        subtitle: Text(alert.imageName),
-        trailing: Text(
-          DateFormat('HH:mm:ss').format(alert.timestamp),
-          style: TextStyle(color: Colors.grey),
+            SizedBox(height: 20),
+            _buildOptionCard(
+              context,
+              'Alerts',
+              'View real-time facial paralysis alerts',
+              Icons.notifications,
+              Colors.orange,
+              () => Navigator.push(
+                context,
+                MaterialPageRoute(builder: (context) => AlertScreen()),
+              ),
+            ),
+          ],
         ),
-        onTap: () => _showAlertDetails(alert),
       ),
     );
   }
 
-  void _showAlertDetails(Alert alert) {
-    showDialog(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            title: Text(alert.title),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(alert.imageName),
-                SizedBox(height: 16),
-                Text(
-                  'Received: ${DateFormat('MMM dd, yyyy - HH:mm:ss').format(alert.timestamp)}',
-                  style: TextStyle(color: Colors.grey),
-                ),
-              ],
-            ),
-            actions: [
-              TextButton(
-                child: Text('OK'),
-                onPressed: () => Navigator.pop(context),
+  Widget _buildOptionCard(
+    BuildContext context,
+    String title,
+    String subtitle,
+    IconData icon,
+    Color color,
+    VoidCallback onTap,
+  ) {
+    return Card(
+      margin: EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+      elevation: 5,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(15)),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(15),
+        child: Container(
+          width: double.infinity,
+          padding: EdgeInsets.all(20),
+          child: Column(
+            children: [
+              Icon(icon, size: 50, color: color),
+              SizedBox(height: 15),
+              Text(
+                title,
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold),
+              ),
+              SizedBox(height: 8),
+              Text(
+                subtitle,
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 14, color: Colors.grey[600]),
               ),
             ],
           ),
-    );
-  }
-
-  void _showConnectionInfo() {
-    showDialog(
-      context: context,
-      builder:
-          (context) => AlertDialog(
-            title: Text('Connection Info'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Server: $_serverUrl'),
-                SizedBox(height: 8),
-                Text('Status: ${_isConnected ? "Connected" : "Disconnected"}'),
-                SizedBox(height: 8),
-                Text('Reconnect attempts: $_reconnectAttempt'),
-              ],
-            ),
-            actions: [
-              TextButton(
-                child: Text('Close'),
-                onPressed: () => Navigator.pop(context),
-              ),
-              TextButton(
-                child: Text('Reconnect'),
-                onPressed: () {
-                  Navigator.pop(context);
-                  _manualReconnect();
-                },
-              ),
-            ],
-          ),
+        ),
+      ),
     );
   }
 }
