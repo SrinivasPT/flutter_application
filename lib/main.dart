@@ -24,25 +24,27 @@ class AlertApp extends StatelessWidget {
 class Alert {
   final int id;
   final String title;
-  final String message;
-  final bool isCritical;
+  final String imageName;
   final DateTime timestamp;
 
   Alert({
     required this.id,
     required this.title,
-    required this.message,
-    required this.isCritical,
+    required this.imageName,
     required this.timestamp,
   });
 
   factory Alert.fromJson(Map<String, dynamic> json) {
     return Alert(
-      id: json['id'],
-      title: json['title'],
-      message: json['message'],
-      isCritical: json['isCritical'] ?? false,
-      timestamp: DateTime.parse(json['timestamp']),
+      id: json['id'] ?? 0, // Provide default value if null
+      title: json['title'] ?? 'Unknown Alert', // Provide default value if null
+      imageName:
+          json['imageName'] ??
+          'No Image', // Changed from 'image_name' to 'imageName'
+      timestamp:
+          json['timestamp'] != null
+              ? DateTime.parse(json['timestamp'])
+              : DateTime.now(), // Handle null timestamp
     );
   }
 }
@@ -61,7 +63,7 @@ class _AlertScreenState extends State<AlertScreen> {
   int _reconnectAttempt = 0;
   Timer? _reconnectTimer;
   static const String _serverUrl =
-      'ws://10.0.2.2:8000/ws'; // Use your actual server address
+      'ws://10.0.2.2:3006/ws'; // Use your actual server address
   // For local development, use 10.0.2.2 for Android emulator
   static const int _maxAlertsToShow = 5; // Updated to show 10 alerts
 
@@ -170,25 +172,35 @@ class _AlertScreenState extends State<AlertScreen> {
   void _handleInitialState(List<dynamic> alerts) {
     setState(() {
       _alerts.clear();
-      _alerts.addAll(alerts.map((a) => Alert.fromJson(a)).toList());
-      // Trim to keep only the most recent alerts
-      if (_alerts.length > _maxAlertsToShow) {
-        _alerts.removeRange(_maxAlertsToShow, _alerts.length);
+      try {
+        _alerts.addAll(
+          alerts.map((a) => Alert.fromJson(a as Map<String, dynamic>)).toList(),
+        );
+        // Trim to keep only the most recent alerts
+        if (_alerts.length > _maxAlertsToShow) {
+          _alerts.removeRange(_maxAlertsToShow, _alerts.length);
+        }
+      } catch (e) {
+        print('Error parsing initial alerts: $e');
       }
     });
   }
 
   void _handleNewAlert(Map<String, dynamic> alertData) {
-    final alert = Alert.fromJson(alertData);
-    setState(() {
-      _alerts.insert(0, alert);
-      // Keep only the most recent alerts
-      if (_alerts.length > _maxAlertsToShow) {
-        _alerts.removeRange(_maxAlertsToShow, _alerts.length);
-      }
-    });
+    try {
+      final alert = Alert.fromJson(alertData);
+      setState(() {
+        _alerts.insert(0, alert);
+        // Keep only the most recent alerts
+        if (_alerts.length > _maxAlertsToShow) {
+          _alerts.removeRange(_maxAlertsToShow, _alerts.length);
+        }
+      });
 
-    _showNotification(alert.title, alert.message);
+      _showNotification(alert.title, alert.imageName);
+    } catch (e) {
+      print('Error handling new alert: $e');
+    }
   }
 
   Future<void> _showNotification(String title, String body) async {
@@ -290,14 +302,10 @@ class _AlertScreenState extends State<AlertScreen> {
   Widget _buildAlertCard(Alert alert) {
     return Card(
       margin: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-      color: alert.isCritical ? Colors.red[50] : null,
       child: ListTile(
-        leading: Icon(
-          alert.isCritical ? Icons.warning : Icons.notifications,
-          color: alert.isCritical ? Colors.red : Colors.blue,
-        ),
+        leading: Icon(Icons.warning, color: Colors.blue),
         title: Text(alert.title),
-        subtitle: Text(alert.message),
+        subtitle: Text(alert.imageName),
         trailing: Text(
           DateFormat('HH:mm:ss').format(alert.timestamp),
           style: TextStyle(color: Colors.grey),
@@ -317,7 +325,7 @@ class _AlertScreenState extends State<AlertScreen> {
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(alert.message),
+                Text(alert.imageName),
                 SizedBox(height: 16),
                 Text(
                   'Received: ${DateFormat('MMM dd, yyyy - HH:mm:ss').format(alert.timestamp)}',
